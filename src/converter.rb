@@ -35,19 +35,22 @@ def import_milestones(project)
 	@basecamp.milestones(project.id).inject({}) {|hash, m|
 		items = Podio::Item.find_all_by_external_id(@apps['Milestones']['app_id'], m['id'])
 		if items.count <= 0 #Check doesn't exist
-			res = Podio::Item.create(@apps['Milestones']['app_id'], {:external_id=>m['id'].to_s, 'fields'=>[
+			if @users.has_key?(m['responsible-party-id'].to_i)
+				val = [{:value => @users[m['responsible-party-id']]['profile_id']}]
+			else
+				val = []
+			end
+	
+			id = Podio::Item.create(@apps['Milestones']['app_id'], {:external_id=>m['id'].to_s, 'fields'=>[
 				{:external_id=>'title', :values=>[{:value=>m['title']}]},
-				{:external_id=>'whens-it-due', :values=>[{'start'=>date_converter(m['created-on'], false)}]}
-#				{:external_id=>'whos-responsible', :values=>[{:value=>}]}
-				#{'end'=>date_converter(m['deadline'], true)}
-				
-				]})
+				{:external_id=>'whens-it-due', :values=>[{'start'=>date_converter(m['created-on'], false)}]},
+				{:external_id=>'whos-responsible', :values=>val}]})
 			comments = @basecamp.milestone_comments(m['id'])
 			unless comments.nil?
 				comments.each { |c|
-				Podio::Comment.create('item', res.to_s, {:external_id => c[:id].to_s, :value =>c[:body]})}
+				Podio::Comment.create('item', id.to_s, {:external_id => c[:id].to_s, :value =>"#{c[:body]}\n\nBy: #{@users[c[:author].to_i]['name']}"})}
 			end			
-			hash[m['id']] = {:item=>m, :podio_id=>res}
+			hash[m['id']] = {:item=>m, :podio_id=>id}
 		else
 			hash[m['id']] = {:item=>m, :podio_id=>items.all[0]['item_id']}
 		end
@@ -60,7 +63,7 @@ def create_users(project, space_id)
 		users[user['email-address']] = user
 		users
 	}
-	p bcusers
+	
 	
 	users = Podio::Contact.find_all_for_space(space_id, {:exclude_self => false, :contact_type => ""}).inject({}) { |users, user|
 			user['mail'].each { |mail|
@@ -90,23 +93,31 @@ end
 def import_messages(project, milestones)
 	Basecamp::Message.archive(project_id=project.id).each do |m|
 		m = Basecamp::Message.find(m.id)
-		if m.milestone_id != 0 #FIXME: Refactor to block, or something
-			val = [{:value=>milestones[m.milestone_id][:podio_id]}]
-		else
-			val = []
-		end
+		
 		if Podio::Item.find_all_by_external_id(@apps['Messages']['app_id'], m.id).count <= 0 #Check doesn't exist
+			if m.milestone_id != 0 #FIXME: Refactor to block, or something
+				val = [{:value=>milestones[m.milestone_id][:podio_id]}]
+			else
+				val = []
+			end
+			if @users.has_key?(m.author_id)
+				val2 = [{:value => @users[m.author_id]['profile_id']}]
+			else
+				val2 = []
+			end
 			id = Podio::Item.create(@apps['Messages']['app_id'], {:external_id=>m.id.to_s, 'fields'=>[
 				{:external_id=>'title', :values=>[{:value=>m.title}]},
 				{:external_id=>'body', :values=>[{:value=>m.body}]},
 				{:external_id=>'originally-posted', :values=>[:start=>date_converter(m.posted_on, false)]},
 				{:external_id=>'categories', :values=>[{:value=>Basecamp::Category.find(m.category_id).name}]},
-				{:external_id=>'milestone', :values=>val}
+				{:external_id=>'milestone', :values=>val},
+				{:external_id=>'author', :values=>val2}
 			]})
 
 			unless m.comments.nil?
 				m.comments.each { |c|
-				Podio::Comment.create('item', id.to_s, {:external_id => c[:id].to_s, :value =>c [:body]})
+					p c
+				Podio::Comment.create('item', id.to_s, {:external_id => c[:id].to_s, :value =>"#{c[:body]}\n\nBy: #{@users[c[:author].to_i]['name']}"})
 			}
 			end
 		end
