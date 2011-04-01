@@ -12,6 +12,7 @@ Basecamp.establish_connection!(api_config['basecamp_url'], api_config['basecamp_
 @basecamp = Basecamp.new
 
 Podio.configure do |config|
+  config.api_url = "https://api.nextpodio.dk"
   config.api_key = api_config['api_key']
   config.api_secret = api_config['api_secret']
   config.debug = true
@@ -19,15 +20,6 @@ end
 Podio.client = Podio::Client.new
 Podio.client.get_access_token(api_config['login'], api_config['password'])
 
-def choose_podio_org
-	puts 'This script will create one space/project.
-Choose the Organization for these spaces now'
-	Podio::Organization.find_all.each do |org|
-	  puts "\t#{org['org_id']}: #{org['name']}"
-	end
-	puts "Org id: "
-	org_id = gets.chomp
-end
 
 def date_converter(date, s)
 	if s == true
@@ -44,13 +36,18 @@ def import_milestones(project)
 		items = Podio::Item.find_all_by_external_id(@apps['Milestones']['app_id'], m['id'])
 		if items.count <= 0 #Check doesn't exist
 			res = Podio::Item.create(@apps['Milestones']['app_id'], {:external_id=>m['id'].to_s, 'fields'=>[
-				{:external_id=>'title', 'values'=>[{'value'=>m['title']}]},
-				{:external_id=>'whens-it-due', 'values'=>[{'start'=>date_converter(m['created-on'], false)}]}
+				{:external_id=>'title', :values=>[{:value=>m['title']}]},
+				{:external_id=>'whens-it-due', :values=>[{'start'=>date_converter(m['created-on'], false)}]}
+#				{:external_id=>'whos-responsible', :values=>[{:value=>}]}
 				#{'end'=>date_converter(m['deadline'], true)}
 				
 				]})
-			p res
-			hash[m['id']] = {:item=>m, :podio_id=>res['item_id']}
+			comments = @basecamp.milestone_comments(m['id'])
+			unless comments.nil?
+				comments.each { |c|
+				Podio::Comment.create('item', res.to_s, {:external_id => c[:id].to_s, :value =>c[:body]})}
+			end			
+			hash[m['id']] = {:item=>m, :podio_id=>res}
 		else
 			hash[m['id']] = {:item=>m, :podio_id=>items.all[0]['item_id']}
 		end
@@ -58,61 +55,105 @@ def import_milestones(project)
 	}
 end
 
+def create_users(project, space_id)
+	bcusers = @basecamp.people(project.company.id, project.id).inject({}) {|users, user|
+		users[user['email-address']] = user
+		users
+	}
+	p bcusers
+	
+	users = Podio::Contact.find_all_for_space(space_id, {:exclude_self => false, :contact_type => ""}).inject({}) { |users, user|
+			user['mail'].each { |mail|
+				if bcusers.has_key?(mail)
+					users[bcusers[mail]['id']] = user
+					bcusers.delete(mail)
+				end
+				}
+			users	
+		}
+	bcusers.each { |mail, user|
+		users[user['id']] = create_user(user, space_id)
+	}
+	users
+end
+
+def create_user(user, space_id)
+	res = Podio::Contact.create_space_contact(space_id, {:external_id => user['id'].to_s, :name => "#{user['first-name']} #{user['last-name']}",	:mail => [user['email-address']]})
+	res
+end
+def install_apps(space_id)
+	Podio::Application.install(260, {:space_id => space_id}) #Messages
+	Podio::Application.install(261, {:space_id => space_id}) #Milestone
+	#Podio::Application.install(136474, {:space_id => space_id}) #ToDo
+end
+
 def import_messages(project, milestones)
 	Basecamp::Message.archive(project_id=project.id).each do |m|
 		m = Basecamp::Message.find(m.id)
-		
 		if m.milestone_id != 0 #FIXME: Refactor to block, or something
 			val = [{:value=>milestones[m.milestone_id][:podio_id]}]
 		else
 			val = []
 		end
-		
 		if Podio::Item.find_all_by_external_id(@apps['Messages']['app_id'], m.id).count <= 0 #Check doesn't exist
-			Podio::Item.create(@apps['Messages']['app_id'], {:external_id=>m.id.to_s, 'fields'=>[
-				{:external_id=>'title', 'values'=>[{:value=>m.title}]},
-				{:external_id=>'body', 'values'=>[{:value=>m.body}]},
-				{:external_id=>'originally-posted', 'values'=>[:start=>date_converter(m.posted_on, false)]},
-				{:external_id=>'categories', 'values'=>[{:value=>Basecamp::Category.find(m.category_id).name}]},
-				{:external_id=>'milestone', 'values'=>val}
+			id = Podio::Item.create(@apps['Messages']['app_id'], {:external_id=>m.id.to_s, 'fields'=>[
+				{:external_id=>'title', :values=>[{:value=>m.title}]},
+				{:external_id=>'body', :values=>[{:value=>m.body}]},
+				{:external_id=>'originally-posted', :values=>[:start=>date_converter(m.posted_on, false)]},
+				{:external_id=>'categories', :values=>[{:value=>Basecamp::Category.find(m.category_id).name}]},
+				{:external_id=>'milestone', :values=>val}
 			]})
+
+			unless m.comments.nil?
+				m.comments.each { |c|
+				Podio::Comment.create('item', id.to_s, {:external_id => c[:id].to_s, :value =>c [:body]})
+			}
+			end
 		end
 	end
 end
 
-def cache_project_users(project)
-	@basecamp.people(project.company.id, project.id).inject({}) {|users, user|
-			users[user['id']] = user
-			users
-	}
+
+def choose_podio_org
+	puts 'This script will create one space/project.
+Choose the Organization for these spaces now'
+	Podio::Organization.find_all.each do |org|
+	  puts "\t#{org['org_id']}: #{org['name']}"
+	end
+	puts "Org id: "
+	org_id = gets.chomp
 end
 
-org_id = 8138
-space_id = 24884
+org_id = 8329 #choose_podio_org().to_i
+
 spaces = Podio::Space.find_all_for_org(org_id).inject({}) {|obj, x|
 	obj[x['name']]=x
 	obj
 }
 
 Basecamp::Project.find(:all).each {|project|
-	# users = cache_project_users(project)
+	
 	if !spaces.has_key?(project.name)
 		puts project.name+' not in Podio yet'
 		spaces[project.name]= Podio::Space.create(
 			{'org_id'=>org_id, 'name'=>project.name,
 			 'post_on_new_app' => false, 'post_on_new_member' => false }
 		)
+		space = spaces[project.name]
+		install_apps(space['space_id'])
 	else
 		puts "Already in Podio"
 		space = spaces[project.name]
 	end
-	apps = Podio::Application.find_all_for_space(space['space_id'].to_i)
-	@apps = apps.inject({}) {|hash,app|
+	@apps = Podio::Application.find_all_for_space(space['space_id']).inject({}) {
+	|hash,app|
 		if app['status'] == 'active'
 			hash[app['config']['name']] = app
 		end
 		hash
 	}
+
+	@users = create_users(project, space['space_id'])
 	
 	milestones = import_milestones(project)
 	import_messages(project, milestones)
