@@ -381,8 +381,13 @@ class Basecamp
       end
     end
 
-    def initialize(filename)
-      @filename = filename
+    def get
+      resp = Basecamp.connection.get(@url).body
+    end
+
+    def initialize(resp)
+      @filename = resp['name']
+      @url = resp['download_url']
     end
 
     def attributes
