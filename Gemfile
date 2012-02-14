@@ -1,0 +1,5 @@
+source "http://rubygems.org"
+gem "podio", :git => "https://github.com/podio/podio-rb.git"
+gem "basecamp", "0.0.7"
+gem "xml-simple"
+gem "activeresource", :require => "active_resource"

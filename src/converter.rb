@@ -6,7 +6,7 @@ API_CONFIG = YAML::load(File.open('api_config.yml')) #Podio API config
 api_config = API_CONFIG
 
 Basecamp.establish_connection!(api_config['basecamp_url'], api_config['basecamp_username'], api_config['basecamp_password'], true)
-@basecamp = Basecamp.new
+@basecamp = Basecamp
 
 Podio.setup(:api_key => api_config['api_key'], :api_secret => api_config['api_secret'], :debug => true)
 Podio.client.authenticate_with_credentials(api_config['login'], api_config['password'])
