@@ -1,0 +1,7 @@
+This library is currently defunct.
+
+It needs to be updated to use the updated basecamp-wrapper gem's API.
+
+It previously relied on a version of activeresource that had some mutually
+exclusive dependencies with other requirements.  This is the closest I could
+get to it actually working.
